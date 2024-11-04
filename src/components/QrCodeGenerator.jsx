@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "./card";
 import { AlertCircle, Download } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "./alert";
 import { Label } from "./label";
+import "./QrCodeGenerator.css";
 
 const QrCodeGenerator = () => {
   const [input, setInput] = useState("");
@@ -13,8 +14,10 @@ const QrCodeGenerator = () => {
   const [color, setColor] = useState("#000000");
   const [bgColor, setBgColor] = useState("#FFFFFF");
   const [size, setSize] = useState(200);
-  const [errorCorrectionLevel, setErrorCorrectionLevel] = useState("M");
+  const [errorCorrectionLevel, setErrorCorrectionLevel] = useState("H");
   const [history, setHistory] = useState([]);
+  const [logo, setLogo] = useState(null);
+  const [logoSize, setLogoSize] = useState(50);
   const [darkMode, setDarkMode] = useState(() => {
     const savedTheme = localStorage.getItem("darkMode");
     return savedTheme ? JSON.parse(savedTheme) : false;
@@ -34,6 +37,57 @@ const QrCodeGenerator = () => {
     setDarkMode(!darkMode);
   };
 
+  const handleColorChange = (e, type) => {
+    const value = e.target.value;
+    if (type === 'color') {
+      setColor(value);
+    } else {
+      setBgColor(value);
+    }
+  };
+
+  const validateHexColor = (hex) => {
+    const regex = /^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/;
+    return regex.test(hex);
+  };
+
+  const handleHexInputChange = (e, type) => {
+    let value = e.target.value;
+    if (!value.startsWith('#')) {
+      value = '#' + value;
+    }
+    
+    if (value.length <= 7) {
+      if (type === 'color') {
+        setColor(value);
+      } else {
+        setBgColor(value);
+      }
+    }
+  };
+
+  const handleHexInputBlur = (e, type) => {
+    const value = e.target.value;
+    if (!validateHexColor(value)) {
+      if (type === 'color') {
+        setColor('#000000');
+      } else {
+        setBgColor('#FFFFFF');
+      }
+    }
+  };
+
+  const handleLogoUpload = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        setLogo(e.target.result);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   const generateQRCode = async () => {
     if (!input.trim()) {
       setError("Please enter a valid text or URL");
@@ -44,28 +98,67 @@ const QrCodeGenerator = () => {
     setLoading(true);
     setError("");
 
-    // Append UTM parameters to the URL
-    const urlWithParams = `${input}?utm_source=qr_code&utm_medium=print&utm_campaign=campaign_name`;
-
     try {
       const response = await fetch(
-        `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&color=${encodeURIComponent(
-          color.slice(1)
-        )}&bgcolor=${encodeURIComponent(bgColor.slice(1))}&qzone=1&margin=0&data=${encodeURIComponent(
-          urlWithParams
-        )}&ecc=${errorCorrectionLevel}`
+        `https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(
+          input
+        )}&size=${size}x${size}&color=${color.slice(1)}&bgcolor=${bgColor.slice(
+          1
+        )}&qzone=2&format=png&ecc=${errorCorrectionLevel}`
       );
-      if (response.ok) {
-        const newQRCode = response.url;
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const blob = await response.blob();
+      const newQRCode = URL.createObjectURL(blob);
+      
+      if (logo) {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        const qrImage = new Image();
+        
+        qrImage.crossOrigin = "anonymous";
+        
+        qrImage.onload = () => {
+          canvas.width = size;
+          canvas.height = size;
+          
+          // Draw QR code
+          ctx.drawImage(qrImage, 0, 0, size, size);
+          
+          // Create a white square in the center
+          const centerSize = logoSize + 10;
+          const centerX = (size - centerSize) / 2;
+          const centerY = (size - centerSize) / 2;
+          ctx.fillStyle = bgColor;
+          ctx.fillRect(centerX, centerY, centerSize, centerSize);
+          
+          // Draw logo
+          const logoImg = new Image();
+          logoImg.onload = () => {
+            const logoX = (size - logoSize) / 2;
+            const logoY = (size - logoSize) / 2;
+            ctx.drawImage(logoImg, logoX, logoY, logoSize, logoSize);
+            
+            const combinedQR = canvas.toDataURL('image/png');
+            setQRCode(combinedQR);
+            setHistory((prev) => [combinedQR, ...prev.slice(0, 4)]);
+            setLoading(false);
+          };
+          logoImg.src = logo;
+        };
+        qrImage.src = newQRCode;
+      } else {
         setQRCode(newQRCode);
         setHistory((prev) => [newQRCode, ...prev.slice(0, 4)]);
-      } else {
-        throw new Error("Failed to generate QR code");
+        setLoading(false);
       }
     } catch (err) {
+      console.error('Error generating QR code:', err);
       setError("An error occurred while generating the QR code. Please try again.");
       setQRCode("");
-    } finally {
       setLoading(false);
     }
   };
@@ -74,22 +167,31 @@ const QrCodeGenerator = () => {
     if (!qrCode) return;
 
     try {
-      const response = await fetch(
-        `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&color=${encodeURIComponent(
-          color.slice(1)
-        )}&bgcolor=${encodeURIComponent(bgColor.slice(1))}&qzone=1&margin=0&data=${encodeURIComponent(
-          input
-        )}&ecc=${errorCorrectionLevel}&format=${format}`
-      );
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.style.display = "none";
-      a.href = url;
-      a.download = `qrcode.${format}`;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
+      if (logo) {
+        const a = document.createElement("a");
+        a.href = qrCode;
+        a.download = `qrcode-with-logo.${format}`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      } else {
+        const response = await fetch(
+          `https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(
+            input
+          )}&size=${size}x${size}&color=${color.slice(1)}&bgcolor=${bgColor.slice(
+            1
+          )}&qzone=2&format=${format}&ecc=${errorCorrectionLevel}`
+        );
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.style.display = "none";
+        a.href = url;
+        a.download = `qrcode.${format}`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+      }
     } catch (err) {
       setError(`Failed to download QR code as ${format.toUpperCase()}. Please try again.`);
     }
@@ -99,6 +201,7 @@ const QrCodeGenerator = () => {
     <div className="min-h-screen bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
       <div className="flex justify-end p-4">
         <Button onClick={toggleTheme}>
+          Toggle Theme
         </Button>
       </div>
       <Card className="w-full max-w-2xl mx-auto shadow-lg rounded-lg overflow-hidden bg-white dark:bg-gray-800">
@@ -121,28 +224,48 @@ const QrCodeGenerator = () => {
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="color" className="text-black">QR Code Color</Label>
-                <div className="flex items-center space-x-2">
-                  <Input
-                    id="color"
-                    type="color"
-                    value={color}
-                    onChange={(e) => setColor(e.target.value)}
-                    className="w-12 h-12 p-1 rounded"
-                  />
-                  <span className="text-sm font-medium text-black">{color}</span>
+                <div className="flex flex-col space-y-2">
+                  <div className="flex items-center space-x-2">
+                    <Input
+                      id="color"
+                      type="color"
+                      value={color}
+                      onChange={(e) => handleColorChange(e, 'color')}
+                      className="w-12 h-12 p-1 rounded"
+                    />
+                    <Input
+                      type="text"
+                      value={color}
+                      onChange={(e) => handleHexInputChange(e, 'color')}
+                      onBlur={(e) => handleHexInputBlur(e, 'color')}
+                      placeholder="#000000"
+                      className="flex-1 text-black"
+                      maxLength={7}
+                    />
+                  </div>
                 </div>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="bgColor" className="text-black">Background Color</Label>
-                <div className="flex items-center space-x-2">
-                  <Input
-                    id="bgColor"
-                    type="color"
-                    value={bgColor}
-                    onChange={(e) => setBgColor(e.target.value)}
-                    className="w-12 h-12 p-1 rounded"
-                  />
-                  <span className="text-sm font-medium text-black">{bgColor}</span>
+                <div className="flex flex-col space-y-2">
+                  <div className="flex items-center space-x-2">
+                    <Input
+                      id="bgColor"
+                      type="color"
+                      value={bgColor}
+                      onChange={(e) => handleColorChange(e, 'background')}
+                      className="w-12 h-12 p-1 rounded"
+                    />
+                    <Input
+                      type="text"
+                      value={bgColor}
+                      onChange={(e) => handleHexInputChange(e, 'background')}
+                      onBlur={(e) => handleHexInputBlur(e, 'background')}
+                      placeholder="#FFFFFF"
+                      className="flex-1 text-black"
+                      maxLength={7}
+                    />
+                  </div>
                 </div>
               </div>
             </div>
@@ -178,6 +301,32 @@ const QrCodeGenerator = () => {
                     <path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" />
                   </svg>
                 </div>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="logo" className="text-black">Company Logo</Label>
+              <div className="space-y-2">
+                <Input
+                  id="logo"
+                  type="file"
+                  accept="image/*"
+                  onChange={handleLogoUpload}
+                  className="w-full"
+                />
+                {logo && (
+                  <div>
+                    <Label htmlFor="logoSize" className="text-black">Logo Size: {logoSize}px</Label>
+                    <input
+                      id="logoSize"
+                      type="range"
+                      min={20}
+                      max={size / 3}
+                      value={logoSize}
+                      onChange={(e) => setLogoSize(Number(e.target.value))}
+                      className="w-full"
+                    />
+                  </div>
+                )}
               </div>
             </div>
             <Button onClick={generateQRCode} className="w-full bg-blue-700 text-white py-2 rounded hover:bg-blue-800">
